@@ -1,0 +1,91 @@
+------------------------------------------------------------------------------
+--                 G L A D E    T O     A d a                               --
+--                                                                          --
+--                     Copyright (C) 2025 Juan L. Freniche                  --
+--                                                                          --
+-- This program is free software;  you can redistribute it and/or modify it --
+-- under terms of the  GNU General Public License  as published by the Free --
+-- Software  Foundation;  either version 3,  or (at your  option) any later --
+-- version. It is is distributed in the hope that it will be useful,        --
+-- but WITHOUT ANY WARRANTY;  without even the implied warranty of MERCHAN- --
+-- TABILITY or FITNESS FOR A PARTICULAR PURPOSE.                            --
+--                                                                          --
+-- You should have received a copy of the GNU General Public License and    --
+-- a copy of the GCC Runtime Library Exception along with this program;     --
+-- see the file COPYING3.  If not, see <http://www.gnu.org/licenses/>.      --                                         --
+------------------------------------------------------------------------------
+
+with "gnatcoll_core";
+
+project g2a is
+
+   type Build_Type is ("Debug", "Optimize");
+   Build : Build_Type := external ("BUILD", "Debug");
+
+   for Source_Dirs use (".",
+                        "./src",
+                        "./parsing",
+                        "./emit",
+                        "./tests");
+   for Object_Dir use "./obj";
+   for Main use ("glade2ada.adb");
+   for Exec_Dir use "./tests";
+
+   package Compiler is
+      case Build is
+         when "Debug" =>
+            for Switches ("Ada") use ("-g", "-O0");
+         when "Optimize" =>
+            for Switches ("Ada") use
+              ("-O2", "-gnatn");
+      end case;
+
+      for Switches ("Ada") use Compiler'Switches ("Ada") &
+        ("-gnat2022",      --  Ada 2022
+         "-gnatX",         --  GNAT extensions
+         "-fstack-check",  --  stact check
+         "-gnata",         --  enable assettions
+         "-gnateE",        --  generate extra info in exception msgs
+         "-gnatQ",         --  generate ALI even if illegalities
+         "-gnatVa",        --  validity checking all
+         "-gnaty",         --  enable built-in style checks
+         "-gnaty3",        --  Identation level
+         "-gnatya",        --  Check attribute casing
+         "-gnatyb",        --  Blanks not allowed at statement end
+         "-gnatyc",        --  Check comments, double space
+         "-gnatye",        --  Check end/exit labels
+         "-gnatyf",        --  No form feeds or vertical tabs
+         "-gnatyh",        --  No horizontal tabs
+         "-gnatyi",        --  Check if-then layout
+         "-gnatyk",        --  Check keyword casing
+         "-gnatyl",        --  Check layout
+         "-gnatyM120",     --  Set maximum line length
+         "-gnatyn",        --  Check casing of entities in Standard
+         "-gnatyp",        --  Check pragma casing
+         "-gnatyr",        --  Check references
+         "-gnatys",        --  Check separate specs
+         "-gnatyS",        --  Check no statements after then/else
+         "-gnatyt",        --  Check token spacing
+--         "-gnatwe",        --  warnings and style checks are errors
+         "-gnatwa",        --  all optional warnings
+         "-gnatwC",        --  Suppress warnings on conditionals
+         "-gnatwJ",        --  Disable warnings on obsolescent features
+         "-gnatwM"         --  Disable warnings on modified but unreferenced variables
+       );
+   end Compiler;
+
+   package Binder is
+      case Build is
+         when "Debug" =>
+             for Default_Switches ("Ada") use ("-E");
+         when "Optimize" =>
+             null;
+      end case;
+   end Binder;
+
+   package Builder is
+      for Switches ("ada") use ("-j2");
+   end Builder;
+
+end g2a;
+

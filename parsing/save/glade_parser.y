@@ -1,0 +1,1129 @@
+------------------------------------------------------------------------------
+--                 G L A D E    T O     A d a                               --
+--                                                                          --
+--                     Copyright (C) 2025 Juan L. Freniche                  --
+--                                                                          --
+--  This program is free software;  you can redistribute it and/or modify it --
+--  under terms of the  GNU General Public License  as published by the Free --
+--  Software  Foundation;  either version 3,  or (at your  option) any later --
+--  version. It is is distributed in the hope that it will be useful,        --
+--  but WITHOUT ANY WARRANTY;  without even the implied warranty of MERCHAN- --
+--  TABILITY or FITNESS FOR A PARTICULAR PURPOSE.                            --
+--                                                                          --
+--  You should have received a copy of the GNU General Public License and    --
+--  a copy of the GCC Runtime Library Exception along with this program;     --
+--  see the file COPYING3.  If not, see <http://www.gnu.org/licenses/>.      --
+--                                                                          --
+-------------------------------------------------------------------------------
+
+%unit glade_parser
+
+--  ----------------------------------------------------------------------
+--  Token declarations
+--  ----------------------------------------------------------------------
+--  The many T_PROPERTY_* tokens for translatable string properties
+--  (label, title, text, tooltip-*, placeholder-text, icon tooltips)
+--  mirror the start conditions in the scanner.  The optional attributes
+--  (translatable / context / comments) are factored with the shared
+--  non-terminals opt_translatable, opt_context and opt_comments.
+--  ----------------------------------------------------------------------
+
+%token T_IDENTIFIER T_QUOTED_IDENTIFIER
+%token T_DECIMAL, T_INTEGER, T_QUOTED_INTEGER T_QUOTED_DECIMAL T_NATURAL
+
+%token T_QUOTED_STRING, T_WORD, T_TEXT, T_QUOTED_TEXT
+%token T_QUOTED_BOOLEAN
+%token T_PATH
+
+%token T_COMMENT_END
+%token T_END, T_END_ALONE
+%token T_XML_LINE, T_XML_VERSION, T_XML_ENCODING, T_XML_LINE_END
+%token T_GENERATED, T_END_COMMENT
+%token T_INTERFACE_LINE, T_INTERFACE_LINE_END
+%token T_REQUIRES_LINE, T_LIB_VERSION
+%token T_LOCAL_INTERFACE_LINE
+
+%token T_OBJECT, T_OBJECT_ID, T_OBJECT_END
+
+%token T_PROPERTY, T_PROPERTY_END, T_PROPERTY_TRANSLATABLE
+%token T_PROPERTY_LABEL, T_PROPERTY_TITLE, T_PROPERTY_TEXT, T_PROPERTY_TEAROFFTITLE
+%token T_CONTEXT, T_COMMENTS
+%token T_PROPERTY_TOOLTIPTEXT, T_PROPERTY_TOOLTIPMARKUP, T_PROPERTY_TOOLTIP, T_PROPERTY_SHORT_LABEL
+%token T_PROPERTY_PLACEHOLDERTEXT
+%token T_PROPERTY_ICON1_TOOLTIPTEXT T_PROPERTY_ICON1_TOOLTIPMARKUP
+%token T_PROPERTY_ICON2_TOOLTIPTEXT T_PROPERTY_ICON2_TOOLTIPMARKUP
+
+%token T_GTKSEPARATORMENUITEM, T_GTKIMAGE, T_GTKCELLRENDERERTEXT, T_GTKCELLRENDERERTOGGLE
+%token T_GTKFILEFILTER, T_PATTERNS, T_PATTERNS_END T_PATTERN T_PATTERN_END
+%token T_MIME_TYPES, T_MIME_TYPES_END, T_MIME_TYPE, T_MIME_TYPE_END
+%token T_GTKLISTSTORE, T_GTKTREESTORE, T_COLUMNS, T_COLUMNS_END, T_END_ALONE
+%token T_COLUMN_NAME
+%token T_GBOOLEAN, T_GCHARARRAY, T_GTKBUTTONBOXSTYLE, T_GFLOAT, T_GINT
+%token T_SIGNAL
+%token T_HANDLER, T_SIGNAL_OBJECT, T_SIGNAL_SWAP, T_SIGNAL_AFTER
+
+%token T_CHILD, T_CHILD_TYPE, T_CHILD_END, T_PLACEHOLDER
+%token T_CHILD_INTERNAL_CHILD_ACTION_AREA, T_CHILD_INTERNAL_CHILD_VBOX, T_CHILD_INTERNAL_CHILD_SELECTION
+%token T_INTERNAL_GTKBOX, T_INTERNAL_GTKBUTTONBOX, T_INTERNAL_GTKTREESELECTION, T_INTERNAL_CHILD_ENTRY
+
+%token T_PACKING, T_PACKING_END 
+
+%token T_ACTION_WIDGETS, T_ACTION_WIDGETS_END
+%token T_ACTION_WIDGET_RESPONSE, T_ACTION_WIDGET_RESPONSE_END
+
+%token T_ATTRIBUTES, T_ATTRIBUTES_END
+%token T_ATTRIBUTE_NAME, T_ATTRIBUTE_VAL, T_ATTRIBUTE_END
+
+%token T_DATA, T_ROW, T_ROW_END, T_DATA_END
+%token T_COL0, T_COL0_END
+%token T_COLN, T_COLN_ID, T_COLN_TRANSL, T_COLN_END
+
+%token T_ITEMS, T_ITEMS_END
+%token T_ITEM, T_ITEM_END
+
+------------------------------------------------------------------------------------------
+%with Ada.Strings.Unbounded; 
+{ 
+  subtype Yystype is Ada.Strings.Unbounded.Unbounded_String;
+}
+
+%%
+
+------------------------------------------------------------------------------------------
+-- INTERFACE
+------------------------------------------------------------------------------------------
+glade_file : xml_line
+             generated_line_list 
+             interface  ;
+
+xml_line : T_XML_LINE T_XML_VERSION T_QUOTED_DECIMAL T_XML_ENCODING T_QUOTED_STRING T_XML_LINE_END
+  {
+    if Parser_Debug then
+      Ada.Text_IO.Put_Line ("xml version=" & To_String ($3)
+                            & " encoding=" & To_String ($5));
+    end if;
+  }
+  ;
+
+generated_line_list : generated_line_list generated_line | generated_line ;
+generated_line : T_GENERATED T_IDENTIFIER T_WORD T_COMMENT_END
+  {
+    if Parser_Debug then
+      Ada.Text_IO.Put_Line ("Generated with " & To_String ($2)
+                         & " version " & To_String ($3));
+    end if;
+  }
+  ;
+
+interface : opening_interface
+            interface_body
+            closing_interface ;
+
+interface_body : requires_line
+                 general_object_list
+               | requires_line
+                 local_interface
+                 general_object_list
+               | error
+                 {
+                   --  Recover at interface level after a serious error.
+                   Yyerrok;
+                 }
+               ;
+
+opening_interface : T_INTERFACE_LINE 
+  {
+    if Parser_Debug then
+      Ada.Text_IO.Put_Line ("Opening interface");
+    end if;
+  }
+  ;
+
+closing_interface : T_INTERFACE_LINE_END
+  {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Closing interface");
+    end if;
+  }
+  ;
+
+requires_line : T_REQUIRES_LINE T_QUOTED_STRING T_LIB_VERSION T_QUOTED_STRING T_END
+  {
+    if Parser_Debug then
+      Ada.Text_IO.Put_Line ("Requires " & To_String ($2) & " version " & To_String ($4));
+    end if;
+  }
+  ;
+
+local_interface : T_LOCAL_INTERFACE_LINE T_PATH T_COMMENT_END
+  {
+    if Parser_Debug then
+      Ada.Text_IO.Put_Line ("Local Interface Path " & To_String ($2));
+    end if;
+  }
+  ;
+
+------------------------------------------------------------------------------------------
+--  OBJECT
+------------------------------------------------------------------------------------------
+general_object_list : general_object_list general_object
+                    | general_object
+                    | general_object_list error
+                      {
+                        --  Recover from a malformed object and continue
+                        --  with the next one.
+                        Yyerrok;
+                      }
+                    ;
+
+general_object      : normal_object
+                    | normal_object_alone
+                    | gtkfilefilter_object
+                    | gtkliststore_object
+                    | gtktreestore_object
+                    | gtkseparatormenuitem_object
+                    | gtkimage_object
+                    | gtkcellrenderertext_object
+                    | gtkcellrenderedtoggle_object
+                    ;
+
+normal_object      : normal_object_head normal_object_body ;
+normal_object_head : T_OBJECT T_QUOTED_IDENTIFIER T_OBJECT_ID T_QUOTED_IDENTIFIER T_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line (To_String ($2) & " " & To_String ($4));
+    end if;
+    G2a.Build_Tree.Create_Object (To_String ($2), To_String ($4));
+   }
+   | T_OBJECT T_QUOTED_IDENTIFIER T_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line (To_String ($2) & " (no id)");
+    end if;
+    G2a.Build_Tree.Create_Object (To_String ($2), "");
+   }
+   ;
+normal_object_body : general_property_list
+                     items_block
+                     attributes
+                     signal_list
+                     child_list
+                     T_OBJECT_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Close current object");
+    end if;
+    G2a.Build_Tree.Close_Current_Object;
+   }
+   | error T_OBJECT_END
+   {
+     --  Recover by closing the current object after an error inside it.
+     if Parser_Debug then
+        Ada.Text_IO.Put_Line ("Close current object (after error recovery)");
+     end if;
+     Yyerrok;
+     G2a.Build_Tree.Close_Current_Object;
+   }
+   ;
+
+normal_object_alone : 
+     T_OBJECT T_QUOTED_IDENTIFIER T_OBJECT_ID T_QUOTED_IDENTIFIER T_END_ALONE
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line (To_String ($2) & " " & To_String ($4) & " (autocerrado)");
+    end if;
+    G2a.Build_Tree.Create_Object (To_String ($2), To_String ($4));
+    G2a.Build_Tree.Close_Current_Object;
+   }
+   | T_OBJECT T_QUOTED_IDENTIFIER T_END_ALONE
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line (To_String ($2) & " (no id) (autocerrado)");
+    end if;
+    G2a.Build_Tree.Create_Object (To_String ($2), "");
+    G2a.Build_Tree.Close_Current_Object;
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+--  ITEMS (ComboBox)
+------------------------------------------------------------------------------------------
+items_block : 
+    -- empty
+    | T_ITEMS 
+      {
+        if Parser_Debug then
+           Ada.Text_IO.Put_Line ("items start");
+        end if;
+        G2a.Build_Tree.Items_Start;
+      }
+      item_list 
+      T_ITEMS_END
+      {
+        if Parser_Debug then
+           Ada.Text_IO.Put_Line ("items end");
+        end if;
+        G2a.Build_Tree.Items_End;
+      }
+    | T_ITEMS error T_ITEMS_END
+      {
+        Yyerrok;
+      }
+    ;
+
+item_list : item_list item_spec
+          | item_spec
+          ;
+
+item_spec : 
+    T_ITEM
+    opt_translatable
+    opt_context
+    opt_comments
+    T_END
+    opt_text
+    T_ITEM_END
+    {
+       declare
+          Trans     : constant String := To_String ($2);
+          Ctx       : constant String := To_String ($3);
+          Comm      : constant String := To_String ($4);
+          Val       : constant String := To_String ($6);
+       begin
+          if Parser_Debug then
+             Ada.Text_IO.Put_Line ("   Item "
+                                   & (if Trans /= "" then "translatable " & Trans & " " else "")
+                                   & Val & " context " & Ctx & " comments " & Comm);
+          end if;
+          G2a.Build_Tree.Attach_Item
+             (Value        => Val,
+              Translatable => Trans,
+              Context      => Ctx,
+              Comments     => Comm);
+       end;
+    }
+    | T_ITEM error T_ITEM_END
+      {
+        Yyerrok;
+      }
+    ;
+
+------------------------------------------------------------------------------------------
+--  ATTRIBUTES
+------------------------------------------------------------------------------------------
+attributes : 
+    --  empty
+
+    | T_ATTRIBUTES 
+    {
+      if Parser_Debug then
+         Ada.Text_IO.Put_Line ("attributes");
+      end if;
+      G2a.Build_Tree.Attributes_Start;
+    }
+    attribute_list
+    T_ATTRIBUTES_END
+    {
+      if Parser_Debug then
+         Ada.Text_IO.Put_Line ("packing end");
+      end if;
+      G2a.Build_Tree.Attributes_End;
+    }
+
+    | T_ATTRIBUTES error T_ATTRIBUTES_END
+    {
+     --  Skip malformed attributes block.
+     Yyerrok;
+    }
+    ;
+
+attribute_list : attribute_list attribute_line
+               | attribute_line
+               ;
+attribute_line : attribute_inline | attribute_block ;
+
+-- Variante 1: <attribute name="weight" value="400"/>
+-- $2 es "weight" (T_QUOTED_STRING), $4 es "400" (T_QUOTED_STRING)
+attribute_inline : T_ATTRIBUTE_NAME T_QUOTED_STRING T_ATTRIBUTE_VAL T_QUOTED_STRING T_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("   Attribute (inline) " & To_String ($2) & " = " & To_String ($4));
+    end if;
+    G2a.Build_Tree.Attach_Attribute (To_String ($2), To_String ($4));
+   }
+   ;
+
+-- Variante 2: <attribute name="weight">400</attribute>
+-- $2 es "weight" (T_QUOTED_STRING), $4 es 400 (T_TEXT)
+attribute_block : T_ATTRIBUTE_NAME T_QUOTED_STRING T_END T_TEXT T_ATTRIBUTE_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("   Attribute (block) " & To_String ($2) & " = " & To_String ($4));
+    end if;
+    G2a.Build_Tree.Attach_Attribute (To_String ($2), To_String ($4));
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+--  FILEFILTER
+------------------------------------------------------------------------------------------
+gtkfilefilter_object : gtkfilefilter_object_head gtkfilefilter_object_body ;
+gtkfilefilter_object_head : T_GTKFILEFILTER T_OBJECT_ID T_QUOTED_IDENTIFIER T_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("""GtkFileFilter""" & " " & To_String ($3));
+    end if;
+    G2a.Build_Tree.Create_Object ("""GtkFileFilter""", To_String ($3));
+   }
+   ;
+gtkfilefilter_object_body : mime_type_block
+                            pattern_block
+                            T_OBJECT_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Close current object");
+    end if;
+    G2a.Build_Tree.Close_Current_Object;
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+mime_type_block  : --  Empty
+                 | T_MIME_TYPES mime_type_list T_MIME_TYPES_END
+   ;
+mime_type_list   : mime_type_list mime_type
+                 | mime_type
+                 | mime_type_list error
+                   {
+                     --  Skip a malformed mime-type entry.
+                     Yyerrok;
+                   }
+                 ;
+mime_type        : T_MIME_TYPE T_TEXT T_MIME_TYPE_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("<mime-type>" & " " & To_String ($2));
+    end if;
+    G2a.Build_Tree.Attach_Mime_Type (To_String ($2));
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+pattern_block  : --  Empty
+               | T_PATTERNS pattern_list T_PATTERNS_END
+   ;
+pattern_list : pattern_list pattern
+             | pattern
+             | pattern_list error
+               {
+                 --  Skip a malformed pattern entry.
+                 Yyerrok;
+               }
+             ;
+pattern       : T_PATTERN T_TEXT T_PATTERN_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("<pattern>" & " " & To_String ($2));
+    end if;
+    G2a.Build_Tree.Attach_Pattern (To_String ($2));
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+--  LISTSTORE
+------------------------------------------------------------------------------------------
+gtkliststore_object : gtkliststore_object_head gtkliststore_object_body | gtkliststore_object_head_alone;
+gtktreestore_object : gtktreestore_object_head gtktreestore_object_body ;
+
+gtkliststore_object_head_alone : T_GTKLISTSTORE T_OBJECT_ID T_QUOTED_IDENTIFIER T_END_ALONE
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("""GtkListStore""" & " " & To_String ($3));
+    end if;
+    G2a.Build_Tree.Create_Object ("""GtkListStore""", To_String ($3));
+    G2a.Build_Tree.Restart_Column_Number;
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Close current object");
+    end if;
+    G2a.Build_Tree.Close_Current_Object;
+   }
+   ;
+
+gtkliststore_object_head : T_GTKLISTSTORE T_OBJECT_ID T_QUOTED_IDENTIFIER T_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("""GtkListStore""" & " " & To_String ($3));
+    end if;
+    G2a.Build_Tree.Create_Object ("""GtkListStore""", To_String ($3));
+    G2a.Build_Tree.Restart_Column_Number;
+   }
+   ;
+
+gtktreestore_object_head : T_GTKTREESTORE T_OBJECT_ID T_QUOTED_IDENTIFIER T_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("""GtkTreeStore""" & " " & To_String ($3));
+    end if;
+    G2a.Build_Tree.Create_Object ("""GtkTreeStore""", To_String ($3));
+    G2a.Build_Tree.Restart_Column_Number;
+   }
+   ;
+
+gtkliststore_object_body : T_COLUMNS
+                           column_list
+                           T_COLUMNS_END
+                           data_list
+                           T_OBJECT_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Close current object");
+    end if;
+    G2a.Build_Tree.Close_Current_Object;
+   }
+   ;
+
+gtktreestore_object_body : T_COLUMNS
+                           column_list
+                           T_COLUMNS_END
+                           T_OBJECT_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Close current object");
+    end if;
+    G2a.Build_Tree.Close_Current_Object;
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+column_list    : column_list column
+               | column
+               | column_list error
+                 {
+                   --  Skip a malformed column declaration and continue.
+                   Yyerrok;
+                 }
+               ;
+column         : column_boolean | column_gchararray | column_gtkbuttonboxstyle
+               | column_float | column_int;
+column_float : T_COLUMN_NAME T_IDENTIFIER T_COMMENT_END T_GFLOAT
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Column" & " " & To_String ($2) & " " & "gfloat");
+    end if;
+    G2a.Build_Tree.Attach_Float_Column (To_String ($2));
+   }
+   ;
+column_int : T_COLUMN_NAME T_IDENTIFIER T_COMMENT_END T_GINT
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Column" & " " & To_String ($2) & " " & "gint");
+    end if;
+    G2a.Build_Tree.Attach_Integer_Column (To_String ($2));
+   }
+   ;
+column_boolean : T_COLUMN_NAME T_IDENTIFIER T_COMMENT_END T_GBOOLEAN
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Column" & " " & To_String ($2) & " " & "gboolean");
+    end if;
+    G2a.Build_Tree.Attach_Boolean_Column (To_String ($2));
+   }
+   ;
+column_gchararray : T_COLUMN_NAME T_IDENTIFIER T_COMMENT_END T_GCHARARRAY
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Column" & " " & To_String ($2) & " " & "gchararray");
+    end if;
+    G2a.Build_Tree.Attach_String_Column (To_String ($2));
+   }
+   ;
+column_gtkbuttonboxstyle  : T_COLUMN_NAME T_IDENTIFIER T_COMMENT_END T_GTKBUTTONBOXSTYLE
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Column" & " " & To_String ($2) & " " & "gtkbuttonboxstyle");
+    end if;
+    G2a.Build_Tree.Attach_Buttonbox_Column (To_String ($2));
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+data_list : --  empty
+          | T_DATA
+            {
+              if Parser_Debug then
+                 Ada.Text_IO.Put_Line ("Data Start");
+              end if;
+              G2a.Build_Tree.Attach_Liststore_Data_Start;
+            }
+            row_data_list
+            T_DATA_END
+            {
+              if Parser_Debug then
+                 Ada.Text_IO.Put_Line ("Data end");
+              end if;
+              G2a.Build_Tree.Attach_Liststore_Data_End;
+            }
+          | T_DATA error T_DATA_END
+            {
+              --  Skip a malformed data block.
+              Yyerrok;
+            }
+          ;
+
+row_data_list : row_data
+              | row_data_list row_data
+              | row_data_list error
+                {
+                  --  Skip a malformed row and continue.
+                  Yyerrok;
+                }
+              ;
+
+row_data : T_ROW
+           col0_data
+           col_data_content
+           T_ROW_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Column Data end");
+    end if;
+    G2a.Build_Tree.Attach_Liststore_Row_Data_End;
+   }
+   | T_ROW error T_ROW_END
+   {
+     --  Recover inside a single row.
+     Yyerrok;
+   }
+   ;
+
+col0_data : T_COL0 T_IDENTIFIER T_COL0_END 
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Column Data for" & " " & To_String ($2));
+    end if;
+    G2a.Build_Tree.Attach_Liststore_Row_Data_Start (To_String ($2));
+   }
+   ;
+
+col_data_content : | -- empty 
+                   col_data_content colN_data;
+
+colN_data : colN_data_Trans_Empty 
+          | colN_data_Trans_SelfClose
+          | colN_data_Trans 
+          | colN_data_normal
+          ;
+
+colN_data_Trans_SelfClose : T_COLN T_COLN_ID T_NATURAL T_COLN_TRANSL T_QUOTED_BOOLEAN T_COLN_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Data" & " " & To_String ($3) & " " & To_String ($5) & " (self-closing)");
+    end if;
+    G2a.Build_Tree.Attach_Liststore_Row_Data (To_String ($3), "");
+   }
+   ;
+
+colN_data_Trans_Empty : T_COLN T_COLN_ID T_NATURAL T_COLN_TRANSL T_QUOTED_BOOLEAN T_COLN_END
+                        T_COLN_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Data" & " " & To_String ($3) & " " & To_String ($5));
+    end if;
+    G2a.Build_Tree.Attach_Liststore_Row_Data (To_String ($3), "");
+   }
+   ;
+colN_data_Trans : T_COLN T_COLN_ID T_NATURAL T_COLN_TRANSL T_QUOTED_BOOLEAN T_COLN_END
+                  T_TEXT T_COLN_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Data" & " " & To_String ($3) & " " & To_String ($5) & " " & To_String ($7));
+    end if;
+    G2a.Build_Tree.Attach_Liststore_Row_Data (To_String ($3), To_String ($7));
+   }
+   ;
+colN_data_normal : T_COLN T_COLN_ID T_NATURAL T_COLN_END T_TEXT T_COLN_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Data" & " " & To_String ($3) & " " & To_String ($5));
+    end if;
+    G2a.Build_Tree.Attach_Liststore_Row_Data (To_String ($3), To_String ($5));
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+--  SEPARATOR MENU
+------------------------------------------------------------------------------------------
+gtkseparatormenuitem_object : gtkseparatormenuitem_object_head
+                              gtkseparatormenuitem_object_body ;
+gtkseparatormenuitem_object_head : T_GTKSEPARATORMENUITEM T_END 
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("""GtkSeparatorMenuItem""");
+    end if;
+    G2a.Build_Tree.Create_Object ("""GtkSeparatorMenuItem""", "");
+   }
+   ;
+gtkseparatormenuitem_object_body : general_property_list
+                                   T_OBJECT_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Close current object");
+    end if;
+    G2a.Build_Tree.Close_Current_Object;
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+--  IMAGE
+------------------------------------------------------------------------------------------
+gtkimage_object : gtkimage_object_head gtkimage_object_body ;
+gtkimage_object_head : T_GTKIMAGE
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("""GtkImage""");
+    end if;
+    G2a.Build_Tree.Create_Object ("""GtkImage""", "");
+   }
+   ;
+gtkimage_object_body : general_property_list
+                       T_OBJECT_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Close current object");
+    end if;
+    G2a.Build_Tree.Close_Current_Object;
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+--  CELLRENDERER
+------------------------------------------------------------------------------------------
+gtkcellrenderertext_object : gtkcellrenderertext_head gtkcellrenderertext_body ;
+gtkcellrenderertext_head   : T_GTKCELLRENDERERTEXT T_OBJECT_ID T_QUOTED_IDENTIFIER T_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("""GtkCellRendererText""" & " " & To_String ($3));
+    end if;
+    G2a.Build_Tree.Create_Object ("""GtkCellRendererText""", To_String ($3));
+   }
+   ;
+gtkcellrenderertext_body : attributes 
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Close current object");
+    end if;
+    G2a.Build_Tree.Close_Current_Object;
+   }
+   ;
+
+gtkcellrenderedtoggle_object : gtkcellrenderertoggle_head gtkcellrenderertoggle_body ;
+gtkcellrenderertoggle_head   : T_GTKCELLRENDERERTOGGLE T_OBJECT_ID T_QUOTED_IDENTIFIER T_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("""GtkCellRendererToggle""" & " " & To_String ($3));
+    end if;
+    G2a.Build_Tree.Create_Object ("""GtkCellRendererToggle""", To_String ($3));
+   }
+   ;
+
+gtkcellrenderertoggle_body : signal_list
+                             T_OBJECT_END
+                             attributes 
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("Close current object");
+    end if;
+    G2a.Build_Tree.Close_Current_Object;
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+--  PROPERTY
+------------------------------------------------------------------------------------------
+opt_text :
+    T_TEXT { $$ := $1; }
+  |
+    { $$ := Ada.Strings.Unbounded.To_Unbounded_String (""); }
+  ;
+
+general_property_list : --  empty
+                      | general_property_list general_property
+                      ;
+
+general_property      : normal_property
+                      | translatable_property
+                      ;
+
+normal_property :
+  T_PROPERTY T_QUOTED_STRING T_END opt_text T_PROPERTY_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("   Property" & " " & To_String ($2) & " " & To_String ($4));
+    end if;
+    G2a.Build_Tree.Attach_Property (To_String ($2), To_String ($4));
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+opt_translatable :
+                                             { $$ := Null_Unbounded_String; } --  empty
+  | T_PROPERTY_TRANSLATABLE T_QUOTED_BOOLEAN { $$ := $2; }
+  ;
+
+opt_context :
+                                             { $$ := Null_Unbounded_String; } --  empty
+  | T_CONTEXT T_QUOTED_TEXT                  { $$ := $2; }
+  ;
+
+opt_comments :
+                                             { $$ := Null_Unbounded_String; } --  empty
+  | T_COMMENTS T_QUOTED_TEXT                 { $$ := $2; }
+  ;
+
+------------------------------------------------------------------------------------------
+--  REFACTORED TRANSLATABLE PROPERTIES RULE
+------------------------------------------------------------------------------------------
+translatable_prop_token : T_PROPERTY_LABEL               { $$ := To_Unbounded_String ("""label"""); }
+                        | T_PROPERTY_SHORT_LABEL         { $$ := To_Unbounded_String ("""short-label"""); }
+                        | T_PROPERTY_TITLE               { $$ := To_Unbounded_String ("""title"""); }
+                        | T_PROPERTY_TEAROFFTITLE        { $$ := To_Unbounded_String ("""tearoff-title"""); }
+                        | T_PROPERTY_TEXT                { $$ := To_Unbounded_String ("""text"""); }
+                        | T_PROPERTY_TOOLTIP             { $$ := To_Unbounded_String ("""tooltip"""); }
+                        | T_PROPERTY_TOOLTIPTEXT         { $$ := To_Unbounded_String ("""tooltip-text"""); }
+                        | T_PROPERTY_TOOLTIPMARKUP       { $$ := To_Unbounded_String ("""tooltip-markup"""); }
+                        | T_PROPERTY_PLACEHOLDERTEXT     { $$ := To_Unbounded_String ("""placeholder-text"""); }
+                        | T_PROPERTY_ICON1_TOOLTIPTEXT   { $$ := To_Unbounded_String ("""primary-icon-tooltip-text"""); }
+                        | T_PROPERTY_ICON1_TOOLTIPMARKUP { $$ := To_Unbounded_String ("""primary-icon-tooltip-markup"""); }
+                        | T_PROPERTY_ICON2_TOOLTIPTEXT   { $$ := To_Unbounded_String ("""secondary-icon-tooltip-text"""); }
+                        | T_PROPERTY_ICON2_TOOLTIPMARKUP { $$ := To_Unbounded_String ("""secondary-icon-tooltip-markup"""); }
+                        ;
+
+translatable_property :
+    translatable_prop_token
+    opt_translatable
+    opt_context
+    opt_comments
+    T_END
+    opt_text
+    T_PROPERTY_END
+   {
+       declare
+          Name_Prop : constant String := To_String ($1);
+          Trans     : constant String := To_String ($2);
+          Ctx       : constant String := To_String ($3);
+          Comm      : constant String := To_String ($4);
+          Val       : constant String := To_String ($6);
+       begin
+          if Parser_Debug then
+             Ada.Text_IO.Put_Line ("   Property " & Name_Prop & " "
+                                   & (if Trans /= "" then "translatable " & Trans & " " else "")
+                                   & Val & " context " & Ctx & " comments " & Comm);
+          end if;
+
+          G2a.Build_Tree.Attach_Translatable_String_Property
+            (Name         => Name_Prop,
+             Translatable => Trans,
+             Value        => Val,
+             Context      => Ctx,
+             Comments     => Comm);
+       end;
+   }
+   ;
+
+------------------------------------------------------------------------------------------
+--  SIGNAL
+------------------------------------------------------------------------------------------
+signal_list        : --  empty
+                   | signal_list signal_spec
+                   ;
+
+signal_spec : T_SIGNAL T_QUOTED_STRING T_HANDLER T_QUOTED_IDENTIFIER
+              opt_signal_object
+              opt_signal_after
+              opt_signal_swap
+              T_END
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line
+         ("   Signal " & To_String ($2)
+          & ", handler " & To_String ($4)
+          & ", object "  & To_String ($5)
+          & ", after "   & To_String ($6)
+          & ", swap "    & To_String ($7));
+    end if;
+    G2a.Build_Tree.Attach_Signal
+      (Name      => To_String ($2),
+       Handler   => To_String ($4),
+       User_Data => To_String ($5),
+       After     => To_String ($6),
+       Swap      => To_String ($7));
+   }
+   ;
+
+opt_signal_object :
+                                             { $$ := Null_Unbounded_String; }
+  | T_SIGNAL_OBJECT T_QUOTED_IDENTIFIER      { $$ := $2; }
+  ;
+
+opt_signal_after :
+                                             { $$ := Null_Unbounded_String; }
+  | T_SIGNAL_AFTER  T_QUOTED_BOOLEAN         { $$ := $2; }
+  ;
+
+opt_signal_swap :
+                                             { $$ := Null_Unbounded_String; }
+  | T_SIGNAL_SWAP   T_QUOTED_BOOLEAN         { $$ := $2; }
+  ;
+
+------------------------------------------------------------------------------------------
+--  CHILD
+------------------------------------------------------------------------------------------
+child_list : --  empty
+           | child_list child_spec
+           ;
+child_spec :  child_normal
+             | child_placeholder
+             | child_internal_child_selection
+             | child_internal_child_vbox 
+             | child_internal_child_action_area
+             | child_internal_child_entry
+             | child_type
+   ;
+child_normal : T_CHILD 
+               general_object 
+               packing_block 
+               T_CHILD_END 
+              ;
+
+child_placeholder : T_CHILD T_PLACEHOLDER
+                    T_CHILD_END 
+                  | T_CHILD_TYPE 
+                    T_PLACEHOLDER 
+                    T_CHILD_END ;
+
+child_internal_child_selection   : T_CHILD_INTERNAL_CHILD_SELECTION
+                                   normal_object
+                                   packing_block
+                                   T_CHILD_END ;
+
+child_internal_child_vbox        : T_CHILD_INTERNAL_CHILD_VBOX 
+                                   normal_object 
+                                   packing_block
+                                   T_CHILD_END
+                                   actions
+   ;
+child_internal_child_action_area : T_CHILD_INTERNAL_CHILD_ACTION_AREA 
+                                   normal_object
+                                   packing_block
+                                   T_CHILD_END;
+
+child_internal_child_entry : T_INTERNAL_CHILD_ENTRY 
+                             general_object 
+                             packing_block
+                             T_CHILD_END 
+                             ;
+
+child_type : T_CHILD_TYPE 
+             general_object
+             packing_block
+             T_CHILD_END
+             ;
+
+------------------------------------------------------------------------------------------
+--  INTERNAL OBJECTS
+------------------------------------------------------------------------------------------
+internal_object_gtktreeselection : internal_object_gtktreeselection_head
+                                   internal_object_gtktreeselection_body
+                                   ;
+
+internal_object_gtktreeselection_head : T_INTERNAL_GTKTREESELECTION
+   {
+    if Parser_Debug then
+       Ada.Text_IO.Put_Line ("""GtkTreeSelection""");
+    end if;
+    G2a.Build_Tree.Create_Object ("""GtkTreeSelection""", "");
+   }
+   ;
+internal_object_gtktreeselection_body : normal_object_body ;
+
+
+------------------------------------------------------------------------------------------
+--  PACKING
+------------------------------------------------------------------------------------------
+packing_block :
+  --  empty
+  | T_PACKING
+    {
+      if Parser_Debug then
+         Ada.Text_IO.Put_Line ("packing");
+      end if;
+      G2a.Build_Tree.Packing_Start;
+    }
+    normal_property_list
+    T_PACKING_END
+    {
+      if Parser_Debug then
+         Ada.Text_IO.Put_Line ("packing end");
+      end if;
+      G2a.Build_Tree.Packing_End;
+    }
+  | T_PACKING error T_PACKING_END
+    {
+      --  Skip a malformed packing block.
+      Yyerrok;
+    }
+  ;
+
+normal_property_list : normal_property_list normal_property
+                     | normal_property
+                     | normal_property_list error
+                       {
+                         --  Skip a malformed packing property.
+                         Yyerrok;
+                       }
+                     ;
+
+------------------------------------------------------------------------------------------
+--  ACTIONS
+------------------------------------------------------------------------------------------
+actions     : --  empty
+            | T_ACTION_WIDGETS action_list T_ACTION_WIDGETS_END
+            | T_ACTION_WIDGETS error T_ACTION_WIDGETS_END
+              {
+                --  Skip a malformed action-widgets block.
+                Yyerrok;
+              }
+            ;
+action_list : action_list action
+            | action
+            | action_list error
+              {
+                --  Skip a malformed action entry.
+                Yyerrok;
+              }
+            ;
+action      : T_ACTION_WIDGET_RESPONSE
+              T_QUOTED_INTEGER T_END
+              T_IDENTIFIER
+              T_ACTION_WIDGET_RESPONSE_END
+            ;
+
+%%
+------------------------------------------------------------------------------
+--                 G L A D E    T O     A d a                               --
+--                                                                          --
+--                     Copyright (C) 2025 Juan L. Freniche                  --
+--                                                                          --
+-- This program is free software;  you can redistribute it and/or modify it --
+-- under terms of the  GNU General Public License  as published by the Free --
+-- Software  Foundation;  either version 3,  or (at your  option) any later --
+-- version. It is is distributed in the hope that it will be useful,        --
+-- but WITHOUT ANY WARRANTY;  without even the implied warranty of MERCHAN- --
+-- TABILITY or FITNESS FOR A PARTICULAR PURPOSE.                            --
+--                                                                          --
+-- You should have received a copy of the GNU General Public License and    --
+-- a copy of the GCC Runtime Library Exception along with this program;     --
+-- see the file COPYING3.  If not, see <http://www.gnu.org/licenses/>.      --
+--                                                                          --
+------------------------------------------------------------------------------
+
+package Glade_Parser is
+
+   Parser_Debug : Boolean := False;
+
+   --  Maximum number of syntax errors before aborting the parse.
+   Max_Errors : constant Natural := 1;
+
+   --  Current number of syntax errors detected.
+   Error_Count : Natural := 0;
+
+   procedure Yyparse;
+
+end Glade_Parser;
+
+
+------------------------------------------------------------------------------
+--                 G L A D E    T O     A d a                               --
+--                                                                          --
+--                     Copyright (C) 2025 Juan L. Freniche                  --
+--                                                                          --
+-- This program is free software;  you can redistribute it and/or modify it --
+-- under terms of the  GNU General Public License  as published by the Free --
+-- Software  Foundation;  either version 3,  or (at your  option) any later --
+-- version. It is is distributed in the hope that it will be useful,        --
+-- but WITHOUT ANY WARRANTY;  without even the implied warranty of MERCHAN- --
+-- TABILITY or FITNESS FOR A PARTICULAR PURPOSE.                            --
+--                                                                          --
+-- You should have received a copy of the GNU General Public License and    --
+-- a copy of the GCC Runtime Library Exception along with this program;     --
+-- see the file COPYING3.  If not, see <http://www.gnu.org/licenses/>.      --
+--                                                                          --
+------------------------------------------------------------------------------
+
+with Ada.Text_IO; use Ada.Text_IO;
+pragma Warnings (Off);
+with Ada.Strings.Unbounded; use Ada.Strings.Unbounded; 
+pragma Warnings (On);
+
+with G2a.Build_Tree;
+with GNAT.OS_Lib;
+
+with Glade_Scanner;
+with Glade_Scanner_Dfa;
+with Glade_Scanner_IO; use Glade_Scanner_IO;
+with Glade_Parser_Tokens;
+with Glade_Parser_Goto;
+with Glade_Parser_Shift_Reduce; 
+
+package body Glade_Parser is
+
+   --  ----------------------------------------------------------------------
+   --  Error reporting and recovery support
+   --  ----------------------------------------------------------------------
+
+   procedure Yyerror (S : String; Tk : Glade_Parser_Tokens.Token);
+   procedure Yyerror (S : String; Tk : Glade_Parser_Tokens.Token) is
+      The_Line : String (1 .. 1024);
+      Last     : Natural;
+      Col      : constant Natural := Yy_Begin_Column;
+      Lin      : constant Natural := Yy_Line_Number;
+      Spaces   : constant String (1 .. Natural'Max (Col - 1, 0)) := (others => ' ');
+   begin
+      Error_Count := Error_Count + 1;
+
+      Put_Line (Standard_Error,
+                "error (" & Error_Count'Image & " of" & Max_Errors'Image
+                & "): " & S);
+      Put_Line (Standard_Error,
+                "  at line" & Lin'Image & ", column" & Col'Image
+                & ", near token " & Tk'Image);
+
+      Yy_Get_Token_Line (The_Line, Last);
+      if Last > 0 then
+         Put_Line (Standard_Error, "  " & The_Line (1 .. Last - 1));
+         Put_Line (Standard_Error, "  " & Spaces & "^");
+      end if;
+
+      if Error_Count >= Max_Errors then
+         Put_Line (Standard_Error,
+                   "Too many errors (" & Max_Errors'Image
+                   & ") -- aborting parse.");
+         GNAT.OS_Lib.OS_Exit (1);
+      end if;
+   end Yyerror;
+
+   function Yylex return Glade_Parser_Tokens.Token;
+   function Yylex return Glade_Parser_Tokens.Token is
+      use Glade_Scanner_Dfa;
+   begin
+      Glade_Parser_Tokens.Yylval := To_Unbounded_String (Yytext);
+      return Glade_Scanner.Yylex;
+   end Yylex;
+
+   pragma Style_Checks (Off);
+   pragma Warnings (Off);
+##
+   pragma Warnings (On);
+   pragma Style_Checks (On);
+
+end Glade_Parser;
